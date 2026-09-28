@@ -26,8 +26,12 @@ defmodule Payrails.HTTP.Mock do
   end
 
   @impl true
-  def request(_method, _url, _headers, _body, _opts \\ []) do
+  def request(method, url, headers, body, opts \\ []) do
     owner = find_owner()
+
+    # Record the request for later inspection
+    requests = get_requests(owner)
+    :ets.insert(@table, {{owner, :requests}, requests ++ [{method, url, headers, body, opts}]})
 
     case :ets.lookup(@table, {owner, :responses}) do
       [{_, [response | rest]}] ->
@@ -61,6 +65,23 @@ defmodule Payrails.HTTP.Mock do
   """
   def mock_responses(responses) do
     :ets.insert(@table, {{self(), :responses}, responses})
+  end
+
+  @doc """
+  Returns the list of recorded requests as `{method, url, headers, body, opts}` tuples.
+  """
+  def get_requests(owner \\ self()) do
+    case :ets.lookup(@table, {owner, :requests}) do
+      [{_, requests}] -> requests
+      [] -> []
+    end
+  end
+
+  @doc """
+  Returns the last recorded request.
+  """
+  def last_request(owner \\ self()) do
+    owner |> get_requests() |> List.last()
   end
 
   # Finds the owning test process. If the calling process is not
