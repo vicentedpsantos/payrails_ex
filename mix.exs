@@ -10,6 +10,7 @@ defmodule Payrails.MixProject do
       version: @version,
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
+      elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),
       name: "PayrailsEx",
       description: "Elixir SDK for the Payrails API",
@@ -25,6 +26,9 @@ defmodule Payrails.MixProject do
       mod: {Payrails.Application, []}
     ]
   end
+
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
 
   defp deps do
     [
