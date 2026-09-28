@@ -2,9 +2,8 @@ defmodule Payrails.HTTP.Mock do
   @moduledoc """
   Mock HTTP adapter for testing.
 
-  Looks up the response to return from the calling process dictionary
-  under the `:payrails_mock_response` key. This allows each test to
-  configure its own response without shared state.
+  Uses an ETS table for response storage, allowing cross-process usage
+  (e.g. when a GenServer makes HTTP calls on behalf of a test).
 
   ## Usage in tests
 
@@ -16,18 +15,29 @@ defmodule Payrails.HTTP.Mock do
   """
 
   @behaviour Payrails.HTTP.Behaviour
+  @table __MODULE__
+
+  @doc """
+  Creates the ETS table. Call once from test_helper.exs.
+  """
+  def setup! do
+    :ets.new(@table, [:named_table, :public, :set])
+    :ok
+  end
 
   @impl true
   def request(_method, _url, _headers, _body, _opts \\ []) do
-    case Process.get(:payrails_mock_responses) do
-      [response | rest] ->
-        Process.put(:payrails_mock_responses, rest)
+    owner = find_owner()
+
+    case :ets.lookup(@table, {owner, :responses}) do
+      [{_, [response | rest]}] ->
+        :ets.insert(@table, {{owner, :responses}, rest})
         response
 
       _ ->
-        case Process.get(:payrails_mock_response) do
-          nil -> {:error, :no_mock_configured}
-          response -> response
+        case :ets.lookup(@table, {owner, :response}) do
+          [{_, response}] -> response
+          [] -> {:error, :no_mock_configured}
         end
     end
   end
@@ -36,20 +46,58 @@ defmodule Payrails.HTTP.Mock do
   Sets the mock response for the current test process.
   """
   def mock_response(response) do
-    Process.put(:payrails_mock_response, {:ok, response})
+    :ets.insert(@table, {{self(), :response}, {:ok, response}})
   end
 
   @doc """
   Sets the mock to return an error.
   """
   def mock_error(reason) do
-    Process.put(:payrails_mock_response, {:error, reason})
+    :ets.insert(@table, {{self(), :response}, {:error, reason}})
   end
 
   @doc """
   Sets a queue of mock responses to be returned in order.
   """
   def mock_responses(responses) do
-    Process.put(:payrails_mock_responses, responses)
+    :ets.insert(@table, {{self(), :responses}, responses})
   end
+
+  # Finds the owning test process. If the calling process is not
+  # the one that set up the mock (e.g. a GenServer), we walk up
+  # the ancestor chain via $ancestors to find the test process.
+  defp find_owner do
+    pid = self()
+
+    case :ets.whereis(@table) do
+      :undefined ->
+        pid
+
+      _ ->
+        if :ets.lookup(@table, {pid, :response}) != [] or
+             :ets.lookup(@table, {pid, :responses}) != [] do
+          pid
+        else
+          find_ancestor_owner(pid)
+        end
+    end
+  end
+
+  defp find_ancestor_owner(pid) do
+    case Process.info(pid, :dictionary) do
+      {:dictionary, dict} ->
+        ancestors = Keyword.get(dict, :"$ancestors", [])
+        Enum.find(ancestors, self(), &has_mock?/1)
+
+      nil ->
+        self()
+    end
+  end
+
+  defp has_mock?(pid) when is_pid(pid) do
+    :ets.lookup(@table, {pid, :response}) != [] or
+      :ets.lookup(@table, {pid, :responses}) != []
+  end
+
+  defp has_mock?(_), do: false
 end
