@@ -1,2 +1,4 @@
 Payrails.HTTP.Mock.setup!()
-ExUnit.start()
+
+# Exclude integration tests by default (require real credentials)
+ExUnit.start(exclude: [:integration])
